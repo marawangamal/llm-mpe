@@ -76,15 +76,31 @@ for epoch in range(num_epochs):
     eval_loss = 0
     with torch.no_grad():
         for batch in val_dataloader:
+            batch = {k: v.to(device) for k, v in batch.items()}
             output = model(**batch)
             eval_loss += output.loss.item()
     eval_loss /= len(val_dataloader) * batch_size
 
     # Log
-    sample_input_ids = torch.tensor(tokenizer.encode("Hello, how are you?"))
+    sample_input_ids = torch.tensor(
+        tokenizer.encode("Hello, how are you?"), device=device
+    )
     sample_text = tokenizer.decode(
         model.generate(sample_input_ids.reshape(1, -1), max_length=16)[0]
     )
     print(
         f"[Epoch {epoch+1}] Train loss: {loss.item():.2f} | Val loss: {eval_loss:.2f} | Sample: {repr(sample_text)}"
+    )
+
+    # Save checkpoint
+    torch.save(
+        {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss.item(),
+            "eval_loss": eval_loss,
+            "sample_text": sample_text,
+        },
+        f"checkpoints/gpt2-latest.pth",
     )

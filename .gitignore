@@ -1,2 +1,3 @@
 .venv
 *sftp.json
+*.pth

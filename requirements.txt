@@ -1,2 +1,3 @@
 torch
 transformers
+# git+https://github.com/SPFlow/SPFlow.git
