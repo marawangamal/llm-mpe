@@ -1,3 +1,4 @@
 torch
 transformers
+matplotlib
 # git+https://github.com/SPFlow/SPFlow.git
