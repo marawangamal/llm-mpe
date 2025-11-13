@@ -5,7 +5,7 @@ from transformers import AutoTokenizer
 from spflow.meta import Scope
 from spflow.modules.rat import RatSPN
 from spflow.modules.leaf import Binomial, Categorical
-from spflow import log_likelihood
+from spflow import log_likelihood, sample
 
 
 # Define dataset
@@ -41,32 +41,36 @@ class ShakespeareDataset(torch.utils.data.Dataset):
         return {"input_ids": seq, "labels": seq}
 
 
-# 1. Shakespeare dataset
+# Hyperparameters
 file_path = "../data/shakespeare/main.txt"
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
 seq_len = 8
 batch_size = 512
 max_samples = None
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+n_epochs = 1_000
+log_every = 500
 
-dataset = ShakespeareDataset(tokenizer, seq_len=seq_len, max_samples=max_samples)
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
+# Model HPs
 depth = 3
 n_region_nodes = 5
 num_leaves = 5
 num_repetitions = 2
 n_root_nodes = 1
 num_feature = seq_len
-# n = torch.tensor(16) # total count for binomial distribution
-n = torch.tensor(len(tokenizer))
+
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+dataset = ShakespeareDataset(tokenizer, seq_len=seq_len, max_samples=max_samples)
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 scope = Scope(list(range(0, num_feature)))
-
-# rat_leaf_layer = Binomial(scope=scope, n=n, out_channels=num_leaves, num_repetitions=num_repetitions)
+# rat_leaf_layer = Binomial(scope=scope, n=torch.tensor(len(tokenizer)), out_channels=num_leaves, num_repetitions=num_repetitions)
 rat_leaf_layer = Categorical(
-    scope=scope, K=n, out_channels=num_leaves, num_repetitions=num_repetitions
+    scope=scope,
+    K=len(tokenizer),
+    out_channels=num_leaves,
+    num_repetitions=num_repetitions,
 )
-rat = RatSPN(
+model_pc = RatSPN(
     leaf_modules=[rat_leaf_layer],
     n_root_nodes=n_root_nodes,
     n_region_nodes=n_region_nodes,
@@ -75,18 +79,24 @@ rat = RatSPN(
     outer_product=True,
     split_halves=True,
 )
+model_pc.to(device)
+
+optimizer = torch.optim.Adam(model_pc.parameters(), lr=1e-2)
 
 
-optimizer = torch.optim.Adam(rat.parameters(), lr=1e-2)
-n_epochs = 1_000
-log_every = 500
 for epoch in range(n_epochs):
-    for step, batch in tqdm(enumerate(dataloader), leave=False, total=len(dataloader)):
+    pbar = tqdm(dataloader, leave=False, total=len(dataloader))
+    for batch in pbar:
+        batch = {k: v.to(device) for k, v in batch.items()}
         optimizer.zero_grad()
         data = batch["input_ids"]
-        ll = log_likelihood(rat, data)  # (B,)
+        ll = log_likelihood(model_pc, data)  # (B,)
         loss = -ll.mean()  # NLL
         loss.backward()
         optimizer.step()
+        pbar.set_postfix(loss=loss.item())
+
     if epoch % log_every == 0:
-        print(f"[Epoch {epoch}] Loss {loss.item():.2f}")
+        x_hat = sample(model_pc, 1)
+        x_text = repr(tokenizer.decode(x_hat[0].to(torch.long)))
+        print(f"[Epoch {epoch}] Loss {loss.item():.2f} | Sample: {x_text}")
